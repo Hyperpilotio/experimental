@@ -1,0 +1,4 @@
+FROM python:2
+COPY isprime.py /src/isprime.py
+CMD ["python","-u","/src/isprime.py"]
+
