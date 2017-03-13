@@ -1,0 +1,12 @@
+{
+    "period": 2,
+    "default_class": "HP",
+    "min_shares": 2,
+    "slack_threshold_shrink": 0.05,
+    "slack_threshold_grow": 0.1,
+    "load_threshold_shrink": 130.0,
+    "load_threshold_grow": 99.0,
+    "BE_growth_rate": 1.1,
+    "BE_shrink_rate": 0.1
+}
+
