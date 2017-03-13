@@ -1,0 +1,7 @@
+FROM python:2
+RUN pip install docker
+WORKDIR "/root/"
+COPY shares_controller.py shares_controller.py
+COPY slo_slack.txt slo_slack.txt
+CMD ["python","-u","shares_controller.py"]
+

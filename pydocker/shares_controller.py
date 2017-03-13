@@ -2,6 +2,12 @@
 
 """
 Dynamic CPU shares controller based on the Heracles design
+
+TODO
+- deal with 0 shares
+- configuration parameters
+- dynamic measurements for slack
+
 """
 
 __author__ = "Christos Kozyrakis"
@@ -12,8 +18,11 @@ __copyright__ = "Copyright 2017, HyperPilot Inc"
 # Standard
 import time
 from datetime import datetime as dt
+import sys
+import json
+import argparse
+import os.path
 import docker
-# External
 
 # Globals
 Past_cpu_stats = {}
@@ -26,7 +35,12 @@ def ActiveContainers(env):
   total_shares = 0
   hp_shares = 0
   be_shares = 0
-  containers = env.containers.list()
+  # attempt to get container list
+  try:
+    containers = env.containers.list()
+  except:
+    print "Cannot communicate with docker daemon, terminating."
+    sys.exit(-1)
 
   for cont in containers:
     # container class and shares
@@ -36,6 +50,7 @@ def ActiveContainers(env):
     else:
       wclass = 'HP'
     shares = cont.attrs['HostConfig']['CpuShares']
+    # TODO: what if all shares are 0?
     if shares < 0:
       shares = 0
     if wclass == 'BE':
@@ -72,6 +87,7 @@ def CpuStats(containers):
     cpu_usage = 100.0
   return container_cpu_percent, cpu_usage
 
+
 # Reads SLO slack
 def SloSlack():
   with open('slo_slack.txt') as f:
@@ -85,28 +101,66 @@ def DisableBE(be_containers):
 
 # grows number of shares for all BE workloads by 10%
 # warning: it does not work if shares are 0 to begin with
-def GrowBE(be_containers, be_shares):
+def GrowBE(be_containers, be_shares, be_growth_rate):
   for cont in be_containers:
     old_shares = be_shares[cont.short_id]
-    new_shares = int(1.1*old_shares)
+    new_shares = int(be_growth_rate*old_shares)
     cont.update(cpu_shares=new_shares)
   return
 
 # shrinks number of shares for all BE workloads by 10%
 # warning: it does not work if shares are 0 to begin with
-def ShrinkBE(be_containers, be_shares):
+def ShrinkBE(be_containers, be_shares, be_shrink_rate, min_shares):
   for cont in be_containers:
     old_shares = be_shares[cont.short_id]
-    new_shares = int(0.9*old_shares)
-    if new_shares < 2: # docker limit
-      new_shares = 2
+    new_shares = int(be_shrink_rate*old_shares)
+    if new_shares < min_shares: # docker limit
+      new_shares = min_shares
     cont.update(cpu_shares=new_shares)
   return
 
+
 def main():
+  # configuration
+  parser = argparse.ArgumentParser()
+  parser.add_argument("-c", "--config", type=str, required=False, default="config.json",
+                      help="configuration file (JSON)")
+  parser.add_argument("-v", "--verbose", help="increase output verbosity", action="store_true")
+  args = parser.parse_args()
+
+  if os.path.isfile(args.config):
+    with open(args.config, 'r') as json_data_file:
+      try:
+        params = json.load(json_data_file)
+      except:
+        print "Error in reading configuration file ", args.config
+        sys.exit(-1)
+  else:
+    print "Cannot read configuration file ", args.config
+    sys.exit(-1)
+
+  # simpler parameters
+  print "Configuration:"
+  for x in params:
+    print "  ", x, params[x]
+  print "\n"
+  period = params['period']
+  load_threshold_grow = params['load_threshold_grow']
+  load_threshold_shrink = params['load_threshold_shrink']
+  slack_threshold_shrink = params['slack_threshold_shrink']
+  slack_threshold_grow = params['slack_threshold_grow']
+  be_growth_rate = params['BE_growth_rate']
+  be_shrink_rate = params['BE_shrink_rate']
+  min_shares = params['min_shares']
+
+
   # init
   cycle = 0
-  env = docker.from_env()
+  try:
+    env = docker.from_env()
+  except:
+    print "Cannot communicate with docker daemon, terminating."
+    sys.exit(-1)
 
   # control loop
   while 1:
@@ -127,14 +181,14 @@ def main():
     # grow, shrink or disable control
     if slo_slack < 0.0:
       DisableBE(be_containers)
-    elif slo_slack < 0.05:
-      ShrinkBE(be_containers, container_shares)
-    elif slo_slack > 0.1: # and cpu_usage < 90.0:
-      GrowBE(be_containers, container_shares)
+    elif slo_slack < slack_threshold_shrink or cpu_usage > load_threshold_shrink:
+      ShrinkBE(be_containers, container_shares, be_shrink_rate, min_shares)
+    elif slo_slack > slack_threshold_grow and cpu_usage < load_threshold_grow:
+      GrowBE(be_containers, container_shares, be_growth_rate)
 
-    print "CPU Shares control cycle ", cycle, " at ", dt.now(), "\n\n"
+    print "CPU Shares control cycle ", cycle, " at ", dt.now(), "\n"
     cycle += 1
-    time.sleep(2)
+    time.sleep(period)
 
 if __name__ == "__main__":
   main()
