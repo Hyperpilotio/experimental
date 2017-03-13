@@ -30,7 +30,11 @@ def ActiveContainers(env):
 
   for cont in containers:
     # container class and shares
-    wclass = cont.attrs['Config']['Labels']['wclass']
+    # default class is high priority
+    if 'wclass' in cont.attrs['Config']['Labels']:
+      wclass = cont.attrs['Config']['Labels']['wclass']
+    else:
+      wclass = 'HP'
     shares = cont.attrs['HostConfig']['CpuShares']
     if shares < 0:
       shares = 0
@@ -117,8 +121,8 @@ def main():
     # check SLO slack from file
     slo_slack = SloSlack()
     print "HP containers ", len(hp_containers), ", BE containers ", len(be_containers)
+    print "Shares (total, HP, BE): ", total_shares, hp_shares, be_shares
     print "SLO slack ", slo_slack, ", Load ", cpu_usage
-    print total_shares, hp_shares, be_shares
 
     # grow, shrink or disable control
     if slo_slack < 0.0:
@@ -128,7 +132,7 @@ def main():
     elif slo_slack > 0.1: # and cpu_usage < 90.0:
       GrowBE(be_containers, container_shares)
 
-    print "CPU Shares control cycle ", cycle, " at ", dt.now(), "\n"
+    print "CPU Shares control cycle ", cycle, " at ", dt.now(), "\n\n"
     cycle += 1
     time.sleep(2)
 
