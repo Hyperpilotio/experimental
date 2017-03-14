@@ -50,6 +50,8 @@ def ActiveContainers(env):
     else:
       wclass = 'HP'
     shares = cont.attrs['HostConfig']['CpuShares']
+    quota = cont.attrs['HostConfig']['CpuQuota']
+    period = cont.attrs['HostConfig']['CpuPeriod']
     # TODO: what if all shares are 0?
     if shares < 0:
       shares = 0
@@ -61,6 +63,7 @@ def ActiveContainers(env):
       hp_shares += shares
     total_shares += shares
     container_shares[cont.short_id] = shares
+    print " >>C>> ", cont.name, wclass, shares, quota, period
 
   return hp_containers, be_containers, container_shares, \
          total_shares, hp_shares, be_shares
@@ -174,10 +177,7 @@ def main():
 
     # check SLO slack from file
     slo_slack = SloSlack()
-    print "HP containers ", len(hp_containers), ", BE containers ", len(be_containers)
-    print "Shares (total, HP, BE): ", total_shares, hp_shares, be_shares
-    print "SLO slack ", slo_slack, ", Load ", cpu_usage
-
+    
     # grow, shrink or disable control
     if slo_slack < 0.0:
       DisableBE(be_containers)
@@ -186,7 +186,11 @@ def main():
     elif slo_slack > slack_threshold_grow and cpu_usage < load_threshold_grow:
       GrowBE(be_containers, container_shares, be_growth_rate)
 
-    print "CPU Shares control cycle ", cycle, " at ", dt.now(), "\n"
+    if args.verbose:
+      print "CPU Shares control cycle ", cycle, " at ", dt.now(), "\n"
+      print "HP containers ", len(hp_containers), ", BE containers ", len(be_containers)
+      print "Shares (total, HP, BE): ", total_shares, hp_shares, be_shares
+      print "SLO slack ", slo_slack, ", Load ", cpu_usage
     cycle += 1
     time.sleep(period)
 
