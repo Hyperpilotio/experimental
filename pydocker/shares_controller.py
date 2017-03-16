@@ -3,10 +3,11 @@
 """
 Dynamic CPU shares controller based on the Heracles design
 
+Current pitfalls:
+- when shrinking, we penalize all BE containers instead of killing 1-2 of them
+
 TODO
-- deal with 0 shares
-- configuration parameters
-- dynamic measurements for slack
+- validate CPU usage measurements
 
 """
 
@@ -28,11 +29,10 @@ import docker
 Past_cpu_stats = {}
 
 # Identifies active containers and their parameters
-def ActiveContainers(env):
+def ActiveContainers(env, min_shares):
   hp_containers = []
   be_containers = []
   container_shares = {}
-  total_shares = 0
   hp_shares = 0
   be_shares = 0
   # attempt to get container list
@@ -46,27 +46,23 @@ def ActiveContainers(env):
     # container class and shares
     # default class is high priority
     if 'wclass' in cont.attrs['Config']['Labels']:
-      wclass = cont.attrs['Config']['Labels']['wclass']
+      wclass = cont.attrs['Config']['Labels']['hyperpilot/wclass']
     else:
       wclass = 'HP'
     shares = cont.attrs['HostConfig']['CpuShares']
-    quota = cont.attrs['HostConfig']['CpuQuota']
-    period = cont.attrs['HostConfig']['CpuPeriod']
-    # TODO: what if all shares are 0?
-    if shares < 0:
-      shares = 0
+    if shares < min_shares:
+      shares = min_shares
+      cont.update(cpu_shares=shares)
     if wclass == 'BE':
       be_containers.append(cont)
       be_shares += shares
     else:
       hp_containers.append(cont)
       hp_shares += shares
-    total_shares += shares
     container_shares[cont.short_id] = shares
-    print " >>C>> ", cont.name, wclass, shares, quota, period
 
   return hp_containers, be_containers, container_shares, \
-         total_shares, hp_shares, be_shares
+         hp_shares, be_shares
 
 
 # Calculates CPU usage statistics for each container
@@ -74,7 +70,7 @@ def CpuStats(containers):
   container_cpu_percent = {}
   cpu_usage = 0.0
   for cont in containers:
-    percent = 0
+    percent = 0.0
     new_stats = cont.stats(stream=False, decode=True)
     new_cpu_stats = new_stats['cpu_stats']
     past_cpu_stats = new_stats['precpu_stats']
@@ -82,6 +78,7 @@ def CpuStats(containers):
                 float(past_cpu_stats['cpu_usage']['total_usage'])
     system_delta = float(new_cpu_stats['system_cpu_usage']) - \
                     float(past_cpu_stats['system_cpu_usage'])
+    # The percentages are system-wide, not scaled per core
     if (system_delta > 0.0) and (cpu_delta > 0.0):
       percent = (cpu_delta / system_delta) * 100.0
     container_cpu_percent[cont.short_id] = percent
@@ -92,6 +89,7 @@ def CpuStats(containers):
 
 
 # Reads SLO slack
+# Temp implementation (read file)
 def SloSlack():
   with open('slo_slack.txt') as f:
     array = [[float(x) for x in line.split()] for line in f]
@@ -102,8 +100,8 @@ def DisableBE(be_containers):
   for cont in be_containers:
     cont.kill()
 
-# grows number of shares for all BE workloads by 10%
-# warning: it does not work if shares are 0 to begin with
+# grows number of shares for all BE workloads by be_growth_rate
+# assumption: non 0 shares
 def GrowBE(be_containers, be_shares, be_growth_rate):
   for cont in be_containers:
     old_shares = be_shares[cont.short_id]
@@ -111,13 +109,13 @@ def GrowBE(be_containers, be_shares, be_growth_rate):
     cont.update(cpu_shares=new_shares)
   return
 
-# shrinks number of shares for all BE workloads by 10%
+# shrinks number of shares for all BE workloads by be_shrink_rate
 # warning: it does not work if shares are 0 to begin with
 def ShrinkBE(be_containers, be_shares, be_shrink_rate, min_shares):
   for cont in be_containers:
     old_shares = be_shares[cont.short_id]
     new_shares = int(be_shrink_rate*old_shares)
-    if new_shares < min_shares: # docker limit
+    if new_shares < min_shares:
       new_shares = min_shares
     cont.update(cpu_shares=new_shares)
   return
@@ -156,7 +154,6 @@ def main():
   be_shrink_rate = params['BE_shrink_rate']
   min_shares = params['min_shares']
 
-
   # init
   cycle = 0
   try:
@@ -170,14 +167,14 @@ def main():
 
     # get active containers and their class
     (hp_containers, be_containers, container_shares, \
-     total_shares, hp_shares, be_shares) = ActiveContainers(env)
+     hp_shares, be_shares) = ActiveContainers(env, min_shares)
 
     # get CPU stats
     (container_cpu_percent, cpu_usage) = CpuStats(hp_containers + be_containers)
 
     # check SLO slack from file
     slo_slack = SloSlack()
-    
+
     # grow, shrink or disable control
     if slo_slack < 0.0:
       DisableBE(be_containers)
@@ -187,10 +184,10 @@ def main():
       GrowBE(be_containers, container_shares, be_growth_rate)
 
     if args.verbose:
-      print "CPU Shares control cycle ", cycle, " at ", dt.now(), "\n"
-      print "HP containers ", len(hp_containers), ", BE containers ", len(be_containers)
-      print "Shares (total, HP, BE): ", total_shares, hp_shares, be_shares
-      print "SLO slack ", slo_slack, ", Load ", cpu_usage
+      print "CPU Shares control cycle ", cycle, " at ", dt.now().strftime('%Y-%m-%d %H:%M:%S')
+      print " HP %d (%d shares), BE %d (%d shares)" \
+            %(len(hp_containers), hp_shares, len(be_containers), be_shares)
+      print " SLO slack ", slo_slack, ", CPU load ", cpu_usage
     cycle += 1
     time.sleep(period)
 

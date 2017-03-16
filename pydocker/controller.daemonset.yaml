@@ -1,0 +1,24 @@
+apiVersion: extensions/v1beta1
+kind: DaemonSet
+metadata:
+  name: controller-daemonset
+spec:
+  template:
+    metadata:
+      labels:
+        name: controller-daemonset 
+    spec:
+      containers:
+        - image: index.docker.io/hyperpilot/controller
+          imagePullPolicy: Always
+          name: controller 
+          volumeMounts:
+            - mountPath: /var/run/docker.sock
+              name: docker-sock
+      volumes:
+         - hostPath:
+              path: /var/run/docker.sock
+           name: docker-sock
+      imagePullSecrets:
+         - name: myregistrykey
+      terminationGracePeriodSeconds: 10
