@@ -38,7 +38,7 @@ def ActiveContainers(env, min_shares):
   # attempt to get container list
   try:
     containers = env.containers.list()
-  except:
+  except docker.errors.APIError:
     print "Cannot communicate with docker daemon, terminating."
     sys.exit(-1)
 
@@ -133,7 +133,7 @@ def main():
     with open(args.config, 'r') as json_data_file:
       try:
         params = json.load(json_data_file)
-      except:
+      except ValueError:
         print "Error in reading configuration file ", args.config
         sys.exit(-1)
   else:
@@ -158,7 +158,7 @@ def main():
   cycle = 0
   try:
     env = docker.from_env()
-  except:
+  except docker.errors.APIError:
     print "Cannot communicate with docker daemon, terminating."
     sys.exit(-1)
 
