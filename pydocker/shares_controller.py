@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-
 """
 Dynamic CPU shares controller based on the Heracles design
 
@@ -15,63 +13,96 @@ __author__ = "Christos Kozyrakis"
 __email__ = "christos@hyperpilot.io"
 __copyright__ = "Copyright 2017, HyperPilot Inc"
 
-
-# Standard
 import time
 from datetime import datetime as dt
 import sys
 import json
 import argparse
 import os.path
+import os
 import docker
+from kubernetes import client, config
+from kubernetes.client.rest import ApiException
 
-# Globals
-Past_cpu_stats = {}
+class Container(object):
+  """ A class for tracking active containers
+  """
 
-# Identifies active containers and their parameters
-def ActiveContainers(env, min_shares):
-  hp_containers = []
-  be_containers = []
-  container_shares = {}
-  hp_shares = 0
-  be_shares = 0
-  # attempt to get container list
+  def __init__(self):
+    self.docker_name = ''
+    self.k8s_pod_name = ''
+    self.k8s_namespace = ''
+    self.docker_id = 0
+    self.wclass = 'HP'
+    self.shares = 0
+    self.docker = None
+    self.cpu_percent = 0
+
+  def __repr__(self):
+    return "<Container:%s pod:%d class:%s shares:%d>" \
+           % (self.docker_name, self.k8s_pod_name, self.wclass, self.shares)
+
+  def __str__(self):
+    return "<Container:%s pod:%d class:%s shares:%d>" \
+           % (self.docker_name, self.k8s_pod_name, self.wclass, self.shares)
+
+
+def ActiveContainers(denv, kenv, params):
+  """ Identifies active containers in a docker environment.
+  """
+  min_shares = params['min_shares']
+  active_containers = {}
+
+  # read container list
   try:
-    containers = env.containers.list()
+    containers = denv.containers.list()
   except docker.errors.APIError:
     print "Cannot communicate with docker daemon, terminating."
     sys.exit(-1)
 
   for cont in containers:
-    # container class and shares
-    # default class is high priority
-    if 'wclass' in cont.attrs['Config']['Labels']:
-      wclass = cont.attrs['Config']['Labels']['hyperpilot/wclass']
-    else:
-      wclass = 'HP'
-    shares = cont.attrs['HostConfig']['CpuShares']
-    if shares < min_shares:
-      shares = min_shares
-      cont.update(cpu_shares=shares)
-    if wclass == 'BE':
-      be_containers.append(cont)
-      be_shares += shares
-    else:
-      hp_containers.append(cont)
-      hp_shares += shares
-    container_shares[cont.short_id] = shares
+    _ = Container()
+    _.docker_id = cont.id
+    _.docker_name = cont.name
+    _.docker = cont
+    # check container class
+    if 'hyperpilot/class' in cont.attrs['Config']['Labels']:
+      _.wclass = cont.attrs['Config']['Labels']['hyperpilot/class']
+    # check container shares
+    _.shares = cont.attrs['HostConfig']['CpuShares']
+    if _.shares < min_shares:
+      _.shares = min_shares
+      cont.update(cpu_shares=_.shares)
+    # append to dictionary of active containers
+    active_containers[_.docker_id] = _
 
-  return hp_containers, be_containers, container_shares, \
-         hp_shares, be_shares
+  # Check container class in K8S
+  if params['mode'] == 'k8s':
+    # get all best effort pods
+    label_selector = 'hyperpilot/class = BE'
+    try:
+      pods = kenv.list_pod_for_all_namespaces(watch=False,\
+                                            label_selector=label_selector)
+      for pod in pods.items:
+        if pod.spec.node_name == params['node']:
+          for cont in pod.status.container_statuses:
+            cid = cont.container_id[len('docker://'):]
+            if cid in active_containers:
+              active_containers[cid].wclass = 'BE'
+              active_containers[cid].k8s_pod_name = pod.metadata.name
+              active_containers[cid].k8s_namespace = pod.metadata.namespace
+    except ApiException:
+      print "Cannot talk to K8S API server, labels unknown."
+
+  return active_containers
 
 
 # Calculates CPU usage statistics for each container
 def CpuStats(containers):
-  container_cpu_percent = {}
   cpu_usage = 0.0
-  for cont in containers:
+  for _ in containers:
     percent = 0.0
-    new_stats = cont.stats(stream=False, decode=True)
+    new_stats = _.docker.stats(stream=False, decode=True)
     new_cpu_stats = new_stats['cpu_stats']
     past_cpu_stats = new_stats['precpu_stats']
     cpu_delta = float(new_cpu_stats['cpu_usage']['total_usage']) - \
@@ -81,24 +112,39 @@ def CpuStats(containers):
     # The percentages are system-wide, not scaled per core
     if (system_delta > 0.0) and (cpu_delta > 0.0):
       percent = (cpu_delta / system_delta) * 100.0
-    container_cpu_percent[cont.short_id] = percent
+    _.cpu_percent = percent
     cpu_usage += percent
   if cpu_usage > 100.0:
     cpu_usage = 100.0
-  return container_cpu_percent, cpu_usage
+  return cpu_usage
 
 
 # Reads SLO slack
 # Temp implementation (read file)
 def SloSlack():
-  with open('slo_slack.txt') as f:
-    array = [[float(x) for x in line.split()] for line in f]
+  with open('slo_slack.txt') as _:
+    array = [[float(x) for x in line.split()] for line in _]
   return array[0][0]
 
 # kills all BE workloads
-def DisableBE(be_containers):
-  for cont in be_containers:
-    cont.kill()
+def DisableBE(kenv, params, containers):
+  body = kenv.client.V1DeleteOptions()
+  # kill BE containers
+  for cont in containers:
+    if cont.wclass == 'BE':
+      # K8s delete pod
+      if params['mode'] == 'k8s':
+        try:
+          _ = kenv.delete_namespaced_pod(cont.k8s_pod_name, \
+                  cont.k8s_namespace, body, grace_period_seconds=0, \
+                  orphan_dependents=True)
+        except ApiException as e:
+          print "Cannot kill K8S BE pod: %s\n" % e
+      else:
+      # docker kill container
+        cont.docker.kill()
+
+  # taint local node
 
 # grows number of shares for all BE workloads by be_growth_rate
 # assumption: non 0 shares
@@ -121,14 +167,15 @@ def ShrinkBE(be_containers, be_shares, be_shrink_rate, min_shares):
   return
 
 
-def main():
-  # configuration
+def __init__():
+  # argument parsing
   parser = argparse.ArgumentParser()
+  parser.add_argument("-v", "--verbose", help="increase output verbosity", action="store_true")
   parser.add_argument("-c", "--config", type=str, required=False, default="config.json",
                       help="configuration file (JSON)")
-  parser.add_argument("-v", "--verbose", help="increase output verbosity", action="store_true")
   args = parser.parse_args()
 
+  # read configuration file
   if os.path.isfile(args.config):
     with open(args.config, 'r') as json_data_file:
       try:
@@ -140,44 +187,50 @@ def main():
     print "Cannot read configuration file ", args.config
     sys.exit(-1)
 
-  # simpler parameters
+  # print configuration parameters
   print "Configuration:"
-  for x in params:
-    print "  ", x, params[x]
-  print "\n"
-  period = params['period']
-  load_threshold_grow = params['load_threshold_grow']
-  load_threshold_shrink = params['load_threshold_shrink']
-  slack_threshold_shrink = params['slack_threshold_shrink']
-  slack_threshold_grow = params['slack_threshold_grow']
-  be_growth_rate = params['BE_growth_rate']
-  be_shrink_rate = params['BE_shrink_rate']
-  min_shares = params['min_shares']
+  for _ in params:
+    print "  ", _, params[_]
 
-  # init
-  cycle = 0
+  # initialize environment
+  # Initialize K8S environment if needed
+  if params['mode'] == 'k8s':
+    try:
+      config.load_incluster_config()
+      kenv = client.CoreV1Api()
+      print "K8S API initialized."
+    except config.ConfigException:
+      print "Cannot initialize K8S environment, terminating."
+      sys.exit(-1)
+    if os.getenv('MY_NODE_NAME') is None:
+      print "Cannot get node name in K8S, terminating."
+      sys.exit(-1)
+    else:
+      params['node'] = os.getenv('MY_NODE_NAME')
+  # always initialize docker
   try:
-    env = docker.from_env()
+    denv = docker.from_env()
+    print "Docker API initialized."
   except docker.errors.APIError:
     print "Cannot communicate with docker daemon, terminating."
     sys.exit(-1)
+  # controller cycle counter for controller
+  cycle = 0
 
   # control loop
   while 1:
 
     # get active containers and their class
-    (hp_containers, be_containers, container_shares, \
-     hp_shares, be_shares) = ActiveContainers(env, min_shares)
-
+    active_containers = ActiveContainers(denv, kenv, params)
     # get CPU stats
-    (container_cpu_percent, cpu_usage) = CpuStats(hp_containers + be_containers)
+    cpu_usage = CpuStats(active_containers)
 
     # check SLO slack from file
     slo_slack = SloSlack()
 
     # grow, shrink or disable control
     if slo_slack < 0.0:
-      DisableBE(be_containers)
+      DisableBE(kenv, params, active_containers)
     elif slo_slack < slack_threshold_shrink or cpu_usage > load_threshold_shrink:
       ShrinkBE(be_containers, container_shares, be_shrink_rate, min_shares)
     elif slo_slack > slack_threshold_grow and cpu_usage < load_threshold_grow:
@@ -191,5 +244,4 @@ def main():
     cycle += 1
     time.sleep(period)
 
-if __name__ == "__main__":
-  main()
+__init__()
