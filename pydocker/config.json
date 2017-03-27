@@ -7,6 +7,7 @@
     "load_threshold_shrink": 130.0,
     "load_threshold_grow": 100.0,
     "BE_growth_rate": 1.1,
-    "BE_shrink_rate": 0.1
+    "BE_shrink_rate": 0.9,
+    "mode" : "k8s"
 }
 

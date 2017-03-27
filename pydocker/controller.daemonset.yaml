@@ -15,6 +15,11 @@ spec:
           volumeMounts:
             - mountPath: /var/run/docker.sock
               name: docker-sock
+          env:
+            - name: MY_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
       volumes:
          - hostPath:
               path: /var/run/docker.sock

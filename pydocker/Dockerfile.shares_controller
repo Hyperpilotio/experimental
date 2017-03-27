@@ -1,5 +1,6 @@
 FROM python:2
-RUN pip install docker
+RUN pip install docker==2.1.0
+RUN pip install kubernetes
 WORKDIR "/root/"
 COPY shares_controller.py shares_controller.py
 COPY slo_slack.txt slo_slack.txt

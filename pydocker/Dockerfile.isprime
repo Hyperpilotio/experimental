@@ -1,4 +1,6 @@
 FROM python:2
+RUN pip install docker==2.1.0
+RUN pip install kubernetes
 COPY isprime.py /src/isprime.py
 CMD ["python","-u","/src/isprime.py"]
 

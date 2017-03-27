@@ -39,12 +39,25 @@ class Container(object):
     self.cpu_percent = 0
 
   def __repr__(self):
-    return "<Container:%s pod:%d class:%s shares:%d>" \
+    return "<Container:%s pod:%s class:%s shares:%d>" \
            % (self.docker_name, self.k8s_pod_name, self.wclass, self.shares)
 
   def __str__(self):
-    return "<Container:%s pod:%d class:%s shares:%d>" \
+    return "<Container:%s pod:%s class:%s shares:%d>" \
            % (self.docker_name, self.k8s_pod_name, self.wclass, self.shares)
+
+
+class ControllerStats(object):
+  """ A class for tracking controller stats
+  """
+
+  def __init__(self):
+    self.hp_cont = 0
+    self.be_cont = 0
+    self.hp_shares = 0
+    self.be_shares = 0
+    self.hp_cpu_percent = 0
+    self.be_cpu_percent = 0
 
 
 def ActiveContainers(denv, kenv, params):
@@ -100,9 +113,12 @@ def ActiveContainers(denv, kenv, params):
 # Calculates CPU usage statistics for each container
 def CpuStats(containers):
   cpu_usage = 0.0
-  for _ in containers:
+  stats = ControllerStats()
+  for _, cont in containers.items():
     percent = 0.0
-    new_stats = _.docker.stats(stream=False, decode=True)
+    print "  2a", dt.now().strftime('%Y-%m-%d %H:%M:%S')
+    new_stats = cont.docker.stats(stream=False, decode=True)
+    print "  2b", dt.now().strftime('%Y-%m-%d %H:%M:%S')
     new_cpu_stats = new_stats['cpu_stats']
     past_cpu_stats = new_stats['precpu_stats']
     cpu_delta = float(new_cpu_stats['cpu_usage']['total_usage']) - \
@@ -112,11 +128,19 @@ def CpuStats(containers):
     # The percentages are system-wide, not scaled per core
     if (system_delta > 0.0) and (cpu_delta > 0.0):
       percent = (cpu_delta / system_delta) * 100.0
-    _.cpu_percent = percent
+    cont.cpu_percent = percent
     cpu_usage += percent
+    if cont.wclass == 'HP':
+      stats.hp_cont += 1
+      stats.hp_shares += cont.shares
+      stats.hp_cpu_percent += percent
+    else:
+      stats.be_cont += 1
+      stats.be_shares += cont.shares
+      stats.be_cpu_percent += percent
   if cpu_usage > 100.0:
     cpu_usage = 100.0
-  return cpu_usage
+  return cpu_usage, stats
 
 
 # Reads SLO slack
@@ -128,9 +152,10 @@ def SloSlack():
 
 # kills all BE workloads
 def DisableBE(kenv, params, containers):
-  body = kenv.client.V1DeleteOptions()
+  if params['mode'] == 'k8s':
+    body = client.V1DeleteOptions()
   # kill BE containers
-  for cont in containers:
+  for _, cont in containers.items():
     if cont.wclass == 'BE':
       # K8s delete pod
       if params['mode'] == 'k8s':
@@ -145,25 +170,37 @@ def DisableBE(kenv, params, containers):
         cont.docker.kill()
 
   # taint local node
+  # will have to do it by invoking kubectl
+
 
 # grows number of shares for all BE workloads by be_growth_rate
 # assumption: non 0 shares
-def GrowBE(be_containers, be_shares, be_growth_rate):
-  for cont in be_containers:
-    old_shares = be_shares[cont.short_id]
-    new_shares = int(be_growth_rate*old_shares)
-    cont.update(cpu_shares=new_shares)
+def GrowBE(active_containers, params):
+  be_growth_rate = params['BE_growth_rate']
+  for _, cont in active_containers.items():
+    if cont.wclass == 'BE':
+      new_shares = int(be_growth_rate*cont.shares)
+      # if initial shares is very small, boost quickly
+      if new_shares == cont.shares:
+        new_shares = 2 * cont.shares
+      cont.shares = new_shares
+      cont.docker.update(cpu_shares=cont.shares)
   return
 
 # shrinks number of shares for all BE workloads by be_shrink_rate
 # warning: it does not work if shares are 0 to begin with
-def ShrinkBE(be_containers, be_shares, be_shrink_rate, min_shares):
-  for cont in be_containers:
-    old_shares = be_shares[cont.short_id]
-    new_shares = int(be_shrink_rate*old_shares)
-    if new_shares < min_shares:
-      new_shares = min_shares
-    cont.update(cpu_shares=new_shares)
+def ShrinkBE(active_containers, params):
+  be_shrink_rate = params['BE_shrink_rate']
+  min_shares = params['min_shares']
+  for _, cont in active_containers.items():
+    if cont.wclass == 'BE':
+      new_shares = int(be_shrink_rate*cont.shares)
+      if new_shares == cont.shares:
+        new_shares = int(cont.shares/2)
+      if new_shares < min_shares:
+        new_shares = min_shares
+      cont.shares = news_shares
+      cont.docker.update(cpu_shares=cont.shares)
   return
 
 
@@ -207,6 +244,8 @@ def __init__():
       sys.exit(-1)
     else:
       params['node'] = os.getenv('MY_NODE_NAME')
+  else:
+    kenv = client.apis.core_v1_api.CoreV1Api()
   # always initialize docker
   try:
     denv = docker.from_env()
@@ -221,27 +260,33 @@ def __init__():
   while 1:
 
     # get active containers and their class
+    print "  1", dt.now().strftime('%Y-%m-%d %H:%M:%S')
     active_containers = ActiveContainers(denv, kenv, params)
     # get CPU stats
-    cpu_usage = CpuStats(active_containers)
+    print "  2", dt.now().strftime('%Y-%m-%d %H:%M:%S')
+    cpu_usage, stats = CpuStats(active_containers)
 
     # check SLO slack from file
+    print "  3", dt.now().strftime('%Y-%m-%d %H:%M:%S')
     slo_slack = SloSlack()
 
     # grow, shrink or disable control
+    print "  4", dt.now().strftime('%Y-%m-%d %H:%M:%S')
     if slo_slack < 0.0:
       DisableBE(kenv, params, active_containers)
-    elif slo_slack < slack_threshold_shrink or cpu_usage > load_threshold_shrink:
-      ShrinkBE(be_containers, container_shares, be_shrink_rate, min_shares)
-    elif slo_slack > slack_threshold_grow and cpu_usage < load_threshold_grow:
-      GrowBE(be_containers, container_shares, be_growth_rate)
+    elif slo_slack < params['slack_threshold_shrink'] or cpu_usage > params['load_threshold_shrink']:
+      ShrinkBE(active_containers, params)
+      print "Shrinking"
+    elif slo_slack > params['slack_threshold_grow'] and cpu_usage < params['load_threshold_grow']:
+      GrowBE(active_containers, params)
+      print "Growing"
 
     if args.verbose:
       print "CPU Shares control cycle ", cycle, " at ", dt.now().strftime('%Y-%m-%d %H:%M:%S')
-      print " HP %d (%d shares), BE %d (%d shares)" \
-            %(len(hp_containers), hp_shares, len(be_containers), be_shares)
       print " SLO slack ", slo_slack, ", CPU load ", cpu_usage
+      print " HP (%d): %d load, %d shares" % (stats.hp_cont, stats.hp_cpu_percent, stats.hp_shares)
+      print " BE (%d): %d load, %d shares" % (stats.be_cont, stats.be_cpu_percent, stats.be_shares)
     cycle += 1
-    time.sleep(period)
+    time.sleep(params['period'])
 
 __init__()
