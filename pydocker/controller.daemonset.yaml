@@ -2,11 +2,12 @@ apiVersion: extensions/v1beta1
 kind: DaemonSet
 metadata:
   name: controller-daemonset
+  namespace: hyperpilot
 spec:
   template:
     metadata:
       labels:
-        name: controller-daemonset 
+        name: controller-daemonset
     spec:
       containers:
         - image: index.docker.io/hyperpilot/controller

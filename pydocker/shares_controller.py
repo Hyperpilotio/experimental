@@ -70,7 +70,8 @@ class NodeStats(object):
   def __init__(self):
     self.cpu = 0
     self.name = ''
-    self.be_enabled = False
+    self.qos_app = ''
+
 
 def ActiveContainers(denv, kenv, params, node):
   """ Identifies active containers in a docker environment.
@@ -98,8 +99,8 @@ def ActiveContainers(denv, kenv, params, node):
         _.shares = min_shares
         cont.update(cpu_shares=_.shares)
       # check container class
-      if 'hyperpilot/class' in cont.attrs['Config']['Labels']:
-        _.wclass = cont.attrs['Config']['Labels']['hyperpilot/class']
+      if 'hyperpilot.io/wclass' in cont.attrs['Config']['Labels']:
+        _.wclass = cont.attrs['Config']['Labels']['hyperpilot.io/wclass']
       if _.wclass == 'HP':
         stats.hp_cont += 1
         stats.hp_shares += _.shares
@@ -114,7 +115,7 @@ def ActiveContainers(denv, kenv, params, node):
   # Check container class in K8S
   if params['mode'] == 'k8s':
     # get all best effort pods
-    label_selector = 'hyperpilot/class = BE'
+    label_selector = 'hyperpilot.io/wclass = BE'
     try:
       pods = kenv.list_pod_for_all_namespaces(watch=False,\
                                             label_selector=label_selector)
@@ -133,6 +134,16 @@ def ActiveContainers(denv, kenv, params, node):
               active_containers[cid].k8s_namespace = pod.metadata.namespace
     except (ApiException, TypeError, ValueError):
       print "Cannot talk to K8S API server, labels unknown."
+    # get all best effort pods
+    label_selector = 'hyperpilot.io/qos=true'
+    try:
+      pods = kenv.list_pod_for_all_namespaces(watch=False,\
+                                            label_selector=label_selector)
+      if len(pods.items) > 1:
+        print "Multiple QoS tracked workloads, ignoring all but first"
+      node.qos_app = pods.items[0].status.container_statuses[0].name
+    except (ApiException, TypeError, ValueError, IndexError):
+      print "Cannot find QoS service name"
 
   return active_containers, stats
 
@@ -174,7 +185,7 @@ def CpuStatsK8S(node):
     usage_nano_cores = output['node']['cpu']['usageNanoCores']
     cpu_usage = usage_nano_cores / (node.cpu * 1E9)
     return cpu_usage
-  except ValueError as e:
+  except (ValueError, pycurl.error)  as e:
     print "Problem calculating CpuStatsK8S ", e
     return 100.0
 
@@ -187,22 +198,53 @@ def CpuStats(containers, params, node):
     return CpuStatsDocker(containers)
 
 
-# Reads SLO slack
-# Temp implementation (read file)
-def SloSlack():
+def SloSlackFile():
+  """ Read SLO slack from local file
+  """
   with open('slo_slack.txt') as _:
     array = [[float(x) for x in line.split()] for line in _]
   return array[0][0]
+
+
+def SloSlackQoSDS(name):
+  """ Read SLO slack from QoS data store
+  """
+  print "getting SLO for ", name
+  try:
+    _ = pycurl.Curl()
+    data = BytesIO()
+    _.setopt(_.URL, 'qos-data-store:7781/v1/apps/metrics')
+    _.setopt(_.WRITEFUNCTION, data.write)
+    _.perform()
+    output = json.loads(data.getvalue())
+    if output['error']:
+      print "Problem accessing QoS data store"
+      return 0.0
+    if name not in output['data']:
+      print "QoS datastore does not track workload ", name
+    if 'metrics' not in output['data'][name] or \
+       'slack' not in output['data'][name]['metrics']:
+      return 0.0
+    else:
+      return float(output['data'][name]['metrics']['slack'])
+  except (ValueError, pycurl.error) as e:
+    print "Problem accessing QoS data store ", e
+    return 0.0
+
+def SloSlack(name):
+  """ Read SLO slack
+  """
+  return SloSlackQoSDS(name)
+
 
 def EnableBE(params, node):
   """ enables BE workloads, locally
   """
   if params['mode'] == 'k8s':
-    command = 'kubectl taint nodes ' + node.name + ' wclass=NoSchedule-'
+    command = 'kubectl label --overwrite nodes ' + node.name + ' hyperpilot.io/be-enabled=true'
     process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, \
                                stderr=subprocess.STDOUT)
     _ = process.wait()
-    node.be_enabled = True
 
 
 def DisableBE(kenv, params, containers, node):
@@ -230,11 +272,11 @@ def DisableBE(kenv, params, containers, node):
 
   # taint local node
   if params['mode'] == 'k8s':
-    command = 'kubectl taint nodes ' + node.name + ' wclass=HP:NoSchedule'
+    command = 'kubectl label --overwrite nodes ' + node.name + ' hyperpilot.io/be-enabled=false'
     process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, \
                                  stderr=subprocess.STDOUT)
     _ = process.wait()
-    node.be_enabled = False
+
 
 def GrowBE(active_containers, params):
   """ grows number of shares for all BE workloads by be_growth_rate
@@ -252,6 +294,7 @@ def GrowBE(active_containers, params):
         cont.docker.update(cpu_shares=cont.shares)
       except docker.errors.APIError:
         print "Cannot update shares for container %s" % cont.name
+
 
 def ShrinkBE(active_containers, params):
   """ shrinks number of shares for all BE workloads by be_shrink_rate
@@ -370,32 +413,32 @@ def __init__():
     cpu_usage = CpuStats(active_containers, params, node)
 
     # check SLO slack from file
-    slo_slack = SloSlack()
+    slo_slack = SloSlack(node.qos_app)
 
     # grow, shrink or disable control
     if slo_slack < 0.0:
       if verbose:
         print " Disabling phase"
       DisableBE(kenv, params, active_containers, node)
-    elif slo_slack < params['slack_threshold_shrink'] or cpu_usage > params['load_threshold_shrink']:
+    elif slo_slack < params['slack_threshold_shrink'] or \
+         cpu_usage > params['load_threshold_shrink']:
       if verbose:
         print " Shrinking phase"
       ShrinkBE(active_containers, params)
-    elif slo_slack > params['slack_threshold_grow'] and cpu_usage < params['load_threshold_grow']:
+    elif slo_slack > params['slack_threshold_grow'] and \
+         cpu_usage < params['load_threshold_grow']:
       if verbose:
         print " Growing phase"
       GrowBE(active_containers, params)
-      if not node.be_enabled:
-        EnableBE(params, node)
+      EnableBE(params, node)
     else:
-      if not node.be_enabled:
-        EnableBE(params, node)
+      EnableBE(params, node)
 
     if verbose:
-      print "CPU Shares control cycle ", cycle, " at ", dt.now().strftime('%Y-%m-%d %H:%M:%S')
-      print " SLO slack ", slo_slack, ", CPU load ", cpu_usage
-      print " HP (%d): %d load, %d shares" % (stats.hp_cont, stats.hp_cpu_percent, stats.hp_shares)
-      print " BE (%d): %d load, %d shares" % (stats.be_cont, stats.be_cpu_percent, stats.be_shares)
+      print "Shares controller ", cycle, " at ", dt.now().strftime('%H:%M:%S')
+      print " Qos app ", node.qos_app, ", slack ", slo_slack, ", CPU load ", cpu_usage
+      print " HP (%d): %d shares" % (stats.hp_cont, stats.hp_shares)
+      print " BE (%d): %d shares" % (stats.be_cont, stats.be_shares)
     cycle += 1
     time.sleep(params['period'])
 
