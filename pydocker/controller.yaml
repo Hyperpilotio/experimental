@@ -1,0 +1,26 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: controller
+  namespace: hyperpilot
+spec:
+  containers:
+    - name: controller
+      image: index.docker.io/hyperpilot/controller
+      imagePullPolicy: Always
+      volumeMounts:
+        - mountPath: /var/run/docker.sock
+          name: docker-sock
+      env:
+        - name: MY_NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+
+  volumes:
+    - hostPath:
+        path: /var/run/docker.sock
+      name: docker-sock
+  imagePullSecrets:
+    - name: myregistrykey
+
