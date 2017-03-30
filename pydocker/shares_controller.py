@@ -222,7 +222,7 @@ def SloSlackQoSDS(name):
       return 0.0
     if name not in output['data']:
       print "QoS datastore does not track workload ", name
-    if 'metrics' not in output['data'][name] or \
+    elif 'metrics' not in output['data'][name] or \
        'slack' not in output['data'][name]['metrics']:
       return 0.0
     else:

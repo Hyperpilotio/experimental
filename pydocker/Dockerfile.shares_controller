@@ -7,7 +7,5 @@ RUN curl -LO https://storage.googleapis.com/kubernetes-release/release/$(curl -s
 RUN chmod +x ./kubectl
 RUN mv ./kubectl /usr/local/bin/kubectl
 COPY shares_controller.py shares_controller.py
-COPY slo_slack.txt slo_slack.txt
 COPY config.json config.json
 CMD ["python","-u","shares_controller.py","-v"]
-
