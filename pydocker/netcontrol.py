@@ -17,8 +17,8 @@ import time
 from datetime import datetime as dt
 
 # hyperpilot imports
-import pydocker.settings as st
-import pydocker.netclass as netclass
+import settings as st
+import netclass as net
 
 
 def NetControll():

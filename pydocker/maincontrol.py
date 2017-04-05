@@ -30,8 +30,8 @@ from kubernetes import client, config
 from kubernetes.client.rest import ApiException
 
 # hyperpilot imports
-import pydocker.settings as st
-import pydocker.netcontrol as net
+import settings as st
+import netcontrol as net
 
 
 def ActiveContainers():
@@ -303,7 +303,7 @@ def ParseArgs():
     sys.exit(-1)
 
   # frequently used parameters
-  st.k8sOn = (st.params['mode'] == 'k8s')
+  st.k8sOn = (params['mode'] == 'k8s')
 
   # print configuration parameters
   print "Configuration:"
@@ -330,7 +330,6 @@ def configDocker():
 def configK8S():
   """ configure K8S environment
   """
-  EnableBE()
   if st.k8sOn:
     try:
       config.load_incluster_config()
@@ -345,11 +344,13 @@ def configK8S():
       sys.exit(-1)
     # read node stats
     try:
+      print "LALA " + st.node.name
       _ = st.node.kenv.read_node(st.node.name)
     except ApiException as e:
       print "Exception when calling CoreV1Api->read_node: %s\n" % e
       sys.exit(-1)
     st.node.cpu = int(_.status.capacity['cpu'])
+    EnableBE()
 
 
 def __init__():
@@ -370,8 +371,8 @@ def __init__():
   period = st.params['period']
 
   # launch other controllers
-  _ = threading.Thread(target=net.NetControll())
-  _.start()
+  #_ = threading.Thread(target=net.NetControll())
+  #_.start()
 
   # control loop
   cycle = 0

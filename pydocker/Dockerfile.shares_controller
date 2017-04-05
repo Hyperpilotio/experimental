@@ -6,6 +6,11 @@ WORKDIR "/root/"
 RUN curl -LO https://storage.googleapis.com/kubernetes-release/release/$(curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)/bin/linux/amd64/kubectl
 RUN chmod +x ./kubectl
 RUN mv ./kubectl /usr/local/bin/kubectl
-COPY shares_controller.py shares_controller.py
+COPY __init__.py __init__.py
+COPY netclass.py netclass.py
+COPY netcontrol.py netcontrol.py
+COPY maincontrol.py maincontrol.py
+COPY settings.py settings.py
 COPY config.json config.json
-CMD ["python","-u","shares_controller.py","-v"]
+CMD ["python","-u","maincontrol.py","-v"]
+#CMD while true; do echo 'Hit CTRL+C'; sleep 1; done

@@ -1,5 +1,5 @@
 {
-    "mode" : "k8s"
+    "mode" : "k8s",
     "default_class": "HP",
     "period": 2,
     "slack_threshold_shrink": 0.05,
@@ -10,8 +10,8 @@
     "BE_growth_rate": 1.1,
     "BE_shrink_rate": 0.9,
     "net_period": 2,
-    "iface_ext": 'ens3',
-    "iface_cont": weave
+    "iface_ext": "ens3",
+    "iface_cont": "weave",
     "link_bw_mbps" : 10000,
     "max_bw_mbps" : 700
 }

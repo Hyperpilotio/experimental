@@ -51,7 +51,7 @@ class NodeInfo(object):
     self.cpu = 0
     self.name = ''
     self.qos_app = ''
-    self.kenv = client.apis.core_v1_api.CoreV1Api()
+    self.kenv = None
     self.docker = None
 
 
