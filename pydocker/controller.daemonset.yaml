@@ -12,7 +12,9 @@ spec:
       containers:
         - image: index.docker.io/hyperpilot/controller
           imagePullPolicy: Always
-          name: controller 
+          name: controller
+          securityContext:
+             privileged": true
           volumeMounts:
             - mountPath: /var/run/docker.sock
               name: docker-sock
