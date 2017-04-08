@@ -124,7 +124,7 @@ def ActiveContainers(denv, kenv, params, node):
           for cont in pod.status.container_statuses:
             cid = cont.container_id[len('docker://'):]
             if cid in active_containers:
-              if  active_containers[cid].wclass == 'HP':
+              if active_containers[cid].wclass == 'HP':
                 active_containers[cid].wclass = 'BE'
                 stats.be_cont += 1
                 stats.be_shares += active_containers[cid].shares

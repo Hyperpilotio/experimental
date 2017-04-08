@@ -16,6 +16,7 @@ import subprocess
 import re
 import time
 import datetime as dt
+import command_client
 
 class NetClass(object):
   """This class performs network bandwidth isolation using HTB qdisc and ipfilters.
@@ -35,32 +36,31 @@ class NetClass(object):
     self.link_bw_mbps = link_bw_mbps
     self.cont_ips = set()
     self.mark = 6
+    self.command_client = CommandClient()
 
     # reset IP tables
-    try:
-      subprocess.check_call(('iptables -t mangle -F').split())
-    except subprocess.CalledProcessError:
-      raise Exception('Could not reset iptables')
+    _, err = self.command_client.run_command('iptables -t mangle -F')
+    if err:
+      raise Exception('Could not reset iptables: ' + err)
 
     # replace root qdisc with HTB
     # need to disable/enable HTB to get the stats working
-    try:
-      subprocess.check_call(('tc qdisc del dev %s root' % self.iface_ext).split())
-      subprocess.check_call(('tc qdisc add dev %s root handle 1: htb default 1' \
-                               % self.iface_ext).split())
-      subprocess.check_call(('echo 1 > /sys/module/sch_htb/parameters/htb_rate_est'), shell=True)
-      subprocess.check_call(('tc qdisc del dev %s root' % self.iface_ext).split())
-      subprocess.check_call(('tc qdisc add dev %s root handle 1: htb default 1' \
-                               % self.iface_ext).split())
-      subprocess.check_call(('tc class add dev %s parent 1: classid 1:1 htb rate %dmbit' \
-                               % (self.iface_ext, self.link_bw_mbps)).split())
-      subprocess.check_call(('tc class add dev %s parent 1: classid 1:10 htb rate %dmbit ceil %dmbit' \
-                               % (self.iface_ext, self.max_bw_mbps, self.max_bw_mbps)).split())
-      subprocess.check_call(('tc filter add dev %s parent 1: protocol all prio 10 handle %d fw flowid 1:10' \
-                               % (self.iface_ext, self.mark)).split())
-    except subprocess.CalledProcessError:
-      raise Exception('Could not setup htb qdisc')
 
+    success = self.command_client.run_commands([
+      'tc qdisc del dev %s root' % self.iface_ext,
+      'tc qdisc add dev %s root handle 1: htb default 1' % self.iface_ext,
+      'echo 1 > /sys/module/sch_htb/parameters/htb_rate_est',
+      'tc qdisc del dev %s root' % self.iface_ext,
+      'tc qdisc add dev %s root handle 1: htb default 1' % self.iface_ext,
+      'tc class add dev %s parent 1: classid 1:1 htb rate %dmbit' % (self.iface_ext, self.link_bw_mbps),
+      'tc class add dev %s parent 1: classid 1:10 htb rate %dmbit ceil %dmbit' \
+                               % (self.iface_ext, self.max_bw_mbps, self.max_bw_mbps),
+      'tc filter add dev %s parent 1: protocol all prio 10 handle %d fw flowid 1:10' \
+                               % (self.iface_ext, self.mark)
+    ])
+
+    if not success:
+      raise Exception('Could not setup htb qdisc')
 
   def addIPtoFilter(self, cont_ip):
     """ Adds the IP of a container to the IPtables filter
@@ -68,11 +68,11 @@ class NetClass(object):
     if cont_ip in self.cont_ips:
       raise Exception('Duplicate filter for IP %s' % cont_ip)
     self.cont_ips.add(cont_ip)
-    try:
-      subprocess.check_call(('iptables -t mangle -A PREROUTING -i %s -s %s -j MARK --set-mark %d' \
-                               % (self.iface_cont, cont_ip, self.mark)).split())
-    except subprocess.CalledProcessError:
-      raise Exception('Could not add iptable filter for %s' % cont_ip)
+
+    _, err = self.run_command('iptables -t mangle -A PREROUTING -i %s -s %s -j MARK --set-mark %d' \
+                               % (self.iface_cont, cont_ip, self.mark))
+    if err:
+      raise Exception('Could not add iptable filter for %s: %s' % (cont_ip, err))
 
 
   def removeIPfromFilter(self, cont_ip):
@@ -81,20 +81,20 @@ class NetClass(object):
     if cont_ip not in self.cont_ips:
       raise Exception('Not existing filter for %s' % cont_ip)
     self.cont_ips.remove(cont_ip)
-    try:
-      subprocess.check_call(('iptables -t mangle -D PREROUTING -i %s -s %s -j MARK --set-mark %d' \
-                               % (self.iface_cont, cont_ip, self.mark)).split())
-    except subprocess.CalledProcessError:
-      raise Exception('Could not add iptable filter for %s' % cont_ip)
+
+    _, err = self.command_client.run_command('iptables -t mangle -D PREROUTING -i %s -s %s -j MARK --set-mark %d' \
+                               % (self.iface_cont, cont_ip, self.mark))
+    if err:
+      raise Exception('Could not add iptable filter for %s: %s' % (cont_ip, err))
 
 
   def setBwLimit(self, bw_mbps):
     # replace always work for tc filter
-    try:
-      subprocess.check_call(('tc class replace dev %s parent 1: classid 1:10 htb rate %dmbit ceil %dmbit' \
-                               % (self.iface_ext, bw_mbps, bw_mbps)).split())
-    except subprocess.CalledProcessError:
-      raise Exception('Could not change htb class rate')
+
+    _, err = self.command_client.run_command('tc class replace dev %s parent 1: classid 1:10 htb rate %dmbit ceil %dmbit' \
+                               % (self.iface_ext, bw_mbps, bw_mbps))
+    if err:
+      raise Exception('Could not change htb class rate: ' + err)
 
 
   def getBwStatsBlocking(self):
@@ -102,7 +102,9 @@ class NetClass(object):
     """
     # helper method to get stats from tc
     def read_tc_stats():
-      text = subprocess.check_output(('tc -s class show dev %s' % self.iface_ext).split())
+      out, err = self.command_client.run_command('tc -s class show dev %s' % self.iface_ext)
+      if err:
+        raise Exception("Could not run blocking read on interface %s stats: %s" % (self.iface_ext, err))
       """Example format to parse. For some reason rate and pps are always 0...
       class htb 1:1 root prio 0 rate 10000Mbit ceil 10000Mbit burst 0b cburst 0b
        Sent 108 bytes 2 pkt (dropped 0, overlimits 0 requeues 0)
@@ -117,7 +119,7 @@ class NetClass(object):
        tokens: -47 ctokens: -47
       """
       results = {}
-      for _ in re.finditer('class htb 1:(?P<cls>\d+).*?\n.*?Sent (?P<bytes>\d+) bytes', text, re.DOTALL):
+      for _ in re.finditer('class htb 1:(?P<cls>\d+).*?\n.*?Sent (?P<bytes>\d+) bytes', out, re.DOTALL):
         cls = int(_.group('cls'))
         bytes = int(_.group('bytes'))
         results[cls] = 8.0*bytes/1000/1000 # convert to mbps
@@ -142,7 +144,9 @@ class NetClass(object):
   def getBwStats(self):
     """Performs a non-blocking read averaged bandwidth statistics
     """
-    text = subprocess.check_output(('tc -s class show dev %s' % self.iface_ext).split())
+    out, err = self.command_client.run_command('tc -s class show dev %s' % self.iface_ext)
+    if err:
+      raise Exception("Could not run non-blocking read on interface %s stats: %s" % (self.iface_ext, err))
     """
     Example format to parse. Rate and pps are assumed to be valid
     class htb 1:1 root prio 0 rate 10Gbit ceil 10Gbit burst 0b cburst 0b
@@ -158,7 +162,7 @@ class NetClass(object):
       tokens: -47 ctokens: -47
     """
     results = {}
-    for _ in re.finditer('class htb 1:(?P<cls>\d+).*?\n.*?rate (?P<rate>\d+)bit', text, re.DOTALL):
+    for _ in re.finditer('class htb 1:(?P<cls>\d+).*?\n.*?rate (?P<rate>\d+)bit', out, re.DOTALL):
       cls = int(_.group('cls'))
       rate = int(_.group('rate'))
       results[cls] = float(rate / (1000000.0)) # convert to mbps
