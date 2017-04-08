@@ -50,7 +50,7 @@ def NetControll():
 
     # actual controller
     bw_usage = net.getBwStats()
-    hp_bw = bw_usage['1'] - bw_usage['10']
+    hp_bw = bw_usage[1] - bw_usage[10]
     if hp_bw < 0.0:
       hp_bw = 0.0
     be_bw = net.max_bw_mbps - hp_bw - max(0.05*net.max_bw_mbps, 0.10*hp_bw)
