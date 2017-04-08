@@ -1,5 +1,6 @@
 {
     "mode" : "k8s",
+    "ctlloc" : "out",
     "default_class": "HP",
     "period": 5,
     "slack_threshold_shrink": 0.05,

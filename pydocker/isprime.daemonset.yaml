@@ -1,12 +1,12 @@
 apiVersion: extensions/v1beta1
 kind: DaemonSet
 metadata:
-  name: isprime-daemonset
+  name: isprimebe-set1
 spec:
   template:
     metadata:
       labels:
-        name: isprime-daemonset
+        name: isprimebe1
         hyperpilot.io/wclass: BE
       annotations:
         scheduler.alpha.kubernetes.io/affinity: >

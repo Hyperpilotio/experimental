@@ -306,6 +306,10 @@ def ParseArgs():
   # frequently used parameters
   st.k8sOn = (params['mode'] == 'k8s')
 
+  # k8s setup
+  if 'ctlloc' not in params:
+    params['ctlloc'] = 'in'
+
   # print configuration parameters
   print "Configuration:"
   for _ in params:
@@ -333,7 +337,10 @@ def configK8S():
   """
   if st.k8sOn:
     try:
-      config.load_incluster_config()
+      if st.params['ctlloc'] == 'in':
+        config.load_incluster_config()
+      else:
+        config.load_kube_config()
       st.node.kenv = client.CoreV1Api()
       print "K8S API initialized."
     except config.ConfigException:
