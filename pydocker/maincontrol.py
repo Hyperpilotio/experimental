@@ -171,7 +171,7 @@ def SloSlackFile():
 def SloSlackQoSDS(name):
   """ Read SLO slack from QoS data store
   """
-  print "getting SLO for ", name
+  print "  Getting SLO for ", name
   try:
     _ = pycurl.Curl()
     data = BytesIO()
@@ -184,6 +184,7 @@ def SloSlackQoSDS(name):
       return 0.0
     if name not in output['data']:
       print "QoS datastore does not track workload ", name
+      return 0.0
     elif 'metrics' not in output['data'][name] or \
        'slack' not in output['data'][name]['metrics']:
       return 0.0
@@ -344,7 +345,6 @@ def configK8S():
       sys.exit(-1)
     # read node stats
     try:
-      print "LALA " + st.node.name
       _ = st.node.kenv.read_node(st.node.name)
     except ApiException as e:
       print "Exception when calling CoreV1Api->read_node: %s\n" % e
@@ -371,8 +371,14 @@ def __init__():
   period = st.params['period']
 
   # launch other controllers
-  #_ = threading.Thread(target=net.NetControll())
-  #_.start()
+  #if st.verbose:
+  #  print "Starting network controller"
+  #try:
+  #  _ = threading.Thread(target=net.NetControll())
+  #  _.start()
+  #except threading.ThreadError:
+  #  print "Cannot start network controller"
+
 
   # control loop
   cycle = 0

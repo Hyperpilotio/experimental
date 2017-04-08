@@ -18,13 +18,16 @@ from datetime import datetime as dt
 
 # hyperpilot imports
 import settings as st
-import netclass as net
+import netclass as netclass
 
 
 def NetControll():
   """ Network controller
   """
   # initialize controller
+  if st.verbose:
+    print "Starting NetControl (%s, %s, %f, %f)" \
+           % (st.params['iface_ext'], st.params['iface_cont'], st.params['max_bw_mbps'], st.params['link_bw_mbps'])
   net = netclass.NetClass(st.params['iface_ext'], st.params['iface_cont'], \
                           st.params['max_bw_mbps'], st.params['link_bw_mbps'])
   period = st.params['net_period']
