@@ -36,7 +36,7 @@ class NetClass(object):
     self.link_bw_mbps = link_bw_mbps
     self.cont_ips = set()
     self.mark = 6
-    self.command_client = CommandClient()
+    self.command_client = command_client.CommandClient()
 
     # reset IP tables
     _, err = self.command_client.run_command('iptables -t mangle -F')
