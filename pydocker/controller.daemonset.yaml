@@ -7,7 +7,7 @@ spec:
   template:
     metadata:
       labels:
-        name: controller-daemonset
+        name: controller
     spec:
       containers:
         - image: index.docker.io/hyperpilot/controller
@@ -27,6 +27,12 @@ spec:
          - hostPath:
               path: /var/run/docker.sock
            name: docker-sock
-      imagePullSecrets:
+         - hostPath:
+              path: /sbin
+           name: sbin
+         - hostPath:
+              path: /lib
+           name: lib
+     imagePullSecrets:
          - name: myregistrykey
       terminationGracePeriodSeconds: 10
