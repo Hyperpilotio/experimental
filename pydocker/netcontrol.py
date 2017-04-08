@@ -61,6 +61,6 @@ def NetControll():
     # loop
     if st.verbose:
       print "Net controller ", cycle, " at ", dt.now().strftime('%H:%M:%S')
-      print " BW: %f (used) %f (HP), %f (BE)" %(bw_usage, hp_bw, be_bw)
+      print " BW: %f (used) %f (HP), %f (BE)" %(hp_bw + be_bw, hp_bw, be_bw)
     cycle += 1
     time.sleep(period)
