@@ -50,6 +50,7 @@ def NetControll():
 
     # actual controller
     bw_usage = net.getBwStats()
+    total_bw = bw_usage[1]
     hp_bw = bw_usage[1] - bw_usage[10]
     if hp_bw < 0.0:
       hp_bw = 0.0
@@ -61,6 +62,6 @@ def NetControll():
     # loop
     if st.verbose:
       print "Net controller ", cycle, " at ", dt.now().strftime('%H:%M:%S')
-      print " BW: %f (used) %f (HP), %f (BE)" %(hp_bw + be_bw, hp_bw, be_bw)
+      print " BW: %f (used) %f (HP), %f (BE alloc)" %(total_bw, hp_bw, be_bw)
     cycle += 1
     time.sleep(period)
