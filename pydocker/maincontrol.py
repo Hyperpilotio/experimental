@@ -197,7 +197,8 @@ def SloSlackQoSDS(name):
 def SloSlack(name):
   """ Read SLO slack
   """
-  return SloSlackQoSDS(name)
+#  return SloSlackQoSDS(name)
+  return SloSlackFile()
 
 
 def EnableBE():
@@ -378,13 +379,13 @@ def __init__():
   period = st.params['period']
 
   # launch other controllers
-  #if st.verbose:
-  #  print "Starting network controller"
-  #try:
-  #  _ = threading.Thread(target=net.NetControll())
-  #  _.start()
-  #except threading.ThreadError:
-  #  print "Cannot start network controller"
+  if st.verbose:
+    print "Starting network controller"
+  try:
+    _ = threading.Thread(target=net.NetControll())
+    _.start()
+  except threading.ThreadError:
+    print "Cannot start network controller"
 
 
   # control loop
