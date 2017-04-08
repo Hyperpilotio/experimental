@@ -42,10 +42,16 @@ class NetClass(object):
     except subprocess.CalledProcessError:
       raise Exception('Could not reset iptables')
 
+    # make sure HTB is in a reasonable state to begin with
+    try:
+      subprocess.check_call(('tc qdisc del dev %s root' % self.iface_ext).split())
+    except:
+      pass
+
     # replace root qdisc with HTB
     # need to disable/enable HTB to get the stats working
     try:
-      subprocess.check_call(('tc qdisc replace dev %s root handle 1: htb default 1' \
+      subprocess.check_call(('tc qdisc add dev %s root handle 1: htb default 1' \
                                % self.iface_ext).split())
       subprocess.check_call(('echo 1 > /sys/module/sch_htb/parameters/htb_rate_est'), shell=True)
       subprocess.check_call(('tc qdisc del dev %s root' % self.iface_ext).split())
