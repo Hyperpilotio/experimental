@@ -93,7 +93,7 @@ def ActiveContainers():
                 stats.hp_shares -= active_containers[cid].shares
               active_containers[cid].k8s_pod_name = pod.metadata.name
               active_containers[cid].k8s_namespace = pod.metadata.namespace
-              active_containers[cid].ipaddress = pod.status.host_ip
+              active_containers[cid].ipaddress = pod.status.pod_ip
     except (ApiException, TypeError, ValueError):
       print "Cannot talk to K8S API server, labels unknown."
     # get all best effort pods
