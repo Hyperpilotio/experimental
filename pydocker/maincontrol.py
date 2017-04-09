@@ -382,10 +382,11 @@ def __init__():
   if st.verbose:
     print "Starting network controller"
   try:
-    _ = threading.Thread(target=net.NetControll())
+    _ = threading.Thread(name='NetControll', target=net.NetControll)
+    _.setDaemon(True)
     _.start()
   except threading.ThreadError:
-    print "Cannot start network controller"
+    print "Cannot start network controller; continuing without it"
 
 
   # control loop

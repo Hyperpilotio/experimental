@@ -57,8 +57,8 @@ class NetClass(object):
       subprocess.check_call(('tc qdisc del dev %s root' % self.iface_ext).split())
       subprocess.check_call(('tc qdisc add dev %s root handle 1: htb default 1' \
                                % self.iface_ext).split())
-      subprocess.check_call(('tc class add dev %s parent 1: classid 1:1 htb rate %dmbit' \
-                               % (self.iface_ext, self.link_bw_mbps)).split())
+      subprocess.check_call(('tc class add dev %s parent 1: classid 1:1 htb rate %dmbit ceil %dmbit' \
+                               % (self.iface_ext, self.link_bw_mbps, self.link_bw_mbps)).split())
       subprocess.check_call(('tc class add dev %s parent 1: classid 1:10 htb rate %dmbit ceil %dmbit' \
                                % (self.iface_ext, self.max_bw_mbps, self.max_bw_mbps)).split())
       subprocess.check_call(('tc filter add dev %s parent 1: protocol all prio 10 handle %d fw flowid 1:10' \
