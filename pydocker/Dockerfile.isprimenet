@@ -1,0 +1,23 @@
+FROM python:2
+RUN curl -LO https://storage.googleapis.com/kubernetes-release/release/$(curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)/bin/linux/amd64/kubectl
+RUN chmod +x ./kubectl
+RUN mv ./kubectl /usr/local/bin/kubectl
+RUN pip install docker==2.1.0
+RUN pip install kubernetes
+COPY isprime.py /src/isprime.py
+
+# Satisfy deps
+RUN apt-get update && \
+    apt-get install -y gcc make curl && \
+    apt-get clean && \
+    rm -rf /tmp/* /var/tmp/* && \
+    rm -rf /var/lib/apt/lists/* && \
+    rm -f /etc/dpkg/dpkg.cfg.d/02apt-speedup   
+
+# Download netperf
+RUN curl -LO ftp://ftp.netperf.org/netperf/netperf-2.7.0.tar.gz && tar -xzf netperf-2.7.0.tar.gz 
+RUN cd netperf-2.7.0 && ./configure --enable-demo && make && make install
+
+CMD ["/usr/local/bin/netserver", "-D"]
+CMD ["python","-u","/src/isprime.py"]
+
